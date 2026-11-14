@@ -8,6 +8,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(BUILD_CONSOLE "Build the FTXUI console application" ON)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     add_compile_options(-Wall -Wextra -Wpedantic)
@@ -26,10 +27,20 @@ add_library(avl_tree INTERFACE)
 target_include_directories(avl_tree INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/include")
 target_compile_features(avl_tree INTERFACE cxx_std_20)
 
-add_executable(avl_console 
-  main.cpp
-)
-target_link_libraries(avl_console PRIVATE avl_tree)
+if(BUILD_CONSOLE)
+    include(FetchContent)
+    FetchContent_Declare(ftxui
+        GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
+        GIT_TAG v7.0.3
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(ftxui)
+
+    add_executable(avl_console
+      main.cpp
+    )
+    target_link_libraries(avl_console PRIVATE avl_tree ftxui::ftxui)
+endif()
 
 add_executable(avl_benchmark 
   benchmarks/main.cpp
