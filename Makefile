@@ -3,6 +3,7 @@
 .PHONY: build-debug build-release run-debug run-release test-debug test-release
 .PHONY: bd br rd rr td tr
 .PHONY: build-sanitized run-sanitized test-sanitized bs rs ts
+.PHONY: benchmark bench plot pl
 
 build-debug:
 	cmake -S . -B build/debug -DCMAKE_BUILD_TYPE=Debug \
@@ -36,6 +37,21 @@ test-release: build-release
 
 test-sanitized: build-sanitized
 	ctest --test-dir build/sanitized --output-on-failure
+
+benchmark: build-release
+	./build/release/avl_benchmark benchmarks/results/raw.csv
+
+bench: benchmark
+
+build/plot-env/.ready: benchmarks/requirements.txt
+	python3 -m venv build/plot-env
+	build/plot-env/bin/pip install -r benchmarks/requirements.txt
+	touch $@
+
+plot: build/plot-env/.ready
+	MPLCONFIGDIR=build/matplotlib build/plot-env/bin/python benchmarks/plot.py
+
+pl: plot
 
 bd: build-debug
 br: build-release
