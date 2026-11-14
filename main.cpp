@@ -1,4 +1,5 @@
 #include "avl_tree.hpp"
+#include "console/generator.hpp"
 
 #include <ftxui/component/app.hpp>
 #include <ftxui/component/component.hpp>
@@ -7,6 +8,7 @@
 #include <ftxui/component/event.hpp>
 #include <ftxui/dom/elements.hpp>
 
+#include <algorithm>
 #include <array>
 #include <charconv>
 #include <limits>
@@ -65,6 +67,10 @@ int main() {
     avl_tree<record, record_compare> records;
     std::string number;
     std::string name;
+    std::string count_text = "10";
+    std::string minimum_text = "0";
+    std::string maximum_text = "99";
+    std::string seed_text = "42";
     std::string message = "Готово";
     bool input_error = false;
     std::vector<std::string> modes = {"Числа", "Записи"};
@@ -126,6 +132,36 @@ int main() {
         message = (erased ? "Удалено: " : "Не найдено: ") + std::to_string(*value);
     };
 
+    auto generate_values = [&] {
+        auto count = parse_number(count_text);
+        auto minimum = parse_number(minimum_text);
+        auto maximum = parse_number(maximum_text);
+        auto seed = parse_number(seed_text);
+        input_error = true;
+
+        if (!count || *count < 0 || !seed || *seed < 0) {
+            message = "Количество и seed: целые от 0 до " +
+                std::to_string(std::numeric_limits<int>::max()) + ".";
+            return;
+        }
+        if (!minimum || !maximum) {
+            message = "Границы должны быть целыми числами от " +
+                std::to_string(std::numeric_limits<int>::min()) + " до " +
+                std::to_string(std::numeric_limits<int>::max()) + ".";
+            return;
+        }
+
+        try {
+            numbers = generate_tree(*count, *minimum, *maximum, *seed);
+        } catch (const std::invalid_argument& error) {
+            message = error.what();
+            return;
+        }
+        input_error = false;
+        message = "Создано новое дерево: " + std::to_string(*count) +
+            ", seed: " + std::to_string(*seed);
+    };
+
     auto app = App::Fullscreen();
     auto mode_options = MenuOption::Toggle();
     mode_options.on_change = [&] {
@@ -146,6 +182,30 @@ int main() {
     auto find = Button("Найти", find_value, ButtonOption::Ascii());
     auto erase = Button("Удалить", erase_value, ButtonOption::Ascii());
     auto order = Dropdown(&orders, &selected_order);
+    InputOption generation_options;
+    generation_options.multiline = false;
+    generation_options.on_enter = generate_values;
+    auto count_input = Input(&count_text, "10", generation_options);
+    auto minimum_input = Input(&minimum_text, "0", generation_options);
+    auto maximum_input = Input(&maximum_text, "99", generation_options);
+    auto seed_input = Input(&seed_text, "42", generation_options);
+    auto generate = Button("Новое дерево", generate_values, ButtonOption::Ascii());
+    auto generation = Container::Vertical({
+        count_input, minimum_input, maximum_input, seed_input, generate
+    });
+    generation = Renderer(generation, [&] {
+        return vbox({
+            separator(),
+            text("Генерация чисел") | bold,
+            text("Количество"), count_input->Render() | border,
+            text("От (включительно)"), minimum_input->Render() | border,
+            text("До (включительно)"), maximum_input->Render() | border,
+            text("Seed"), seed_input->Render() | border,
+            text("Заменит текущее дерево") | dim,
+            generate->Render()
+        });
+    });
+    generation = Maybe(generation, [&] { return selected_mode == 0; });
     auto exit = Button("Выход", app.ExitLoopClosure());
     mode |= CatchEvent([&](Event event) {
         if (event == Event::Tab) {
@@ -159,8 +219,12 @@ int main() {
         return false;
     });
     auto controls = Container::Vertical({
-        mode, input, name_field, insert, find, erase, order, exit
+        mode, input, name_field, insert, find, erase, order, generation, exit
     });
+    Box fields_box;
+    Element fields_content;
+    bool manual_scroll = false;
+    int scroll_position = 0;
 
     auto screen = Renderer(controls, [&] {
         std::ostringstream output;
@@ -190,7 +254,7 @@ int main() {
 
         std::string result = active_size == 0 ? "(пусто)" : traversal.str();
 
-        auto fields = vbox({
+        fields_content = vbox({
             text("Режим"),
             mode->Render(),
             separator(),
@@ -203,8 +267,13 @@ int main() {
             erase->Render(),
             separator(),
             text("Порядок обхода"),
-            order->Render()
-        }) | vscroll_indicator | yframe | flex;
+            order->Render(),
+            generation->Render()
+        });
+        auto fields = fields_content;
+        if (manual_scroll)
+            fields = fields | focusPosition(0, scroll_position);
+        fields = fields | vscroll_indicator | yframe | flex | reflect(fields_box);
 
         auto panel = vbox({
             text("Управление") | bold,
@@ -233,6 +302,25 @@ int main() {
     });
 
     screen |= CatchEvent([&](Event event) {
+        if (event.is_mouse() &&
+            (event.mouse().button == Mouse::WheelUp ||
+             event.mouse().button == Mouse::WheelDown)) {
+            if (!fields_box.Contain(event.mouse().x, event.mouse().y))
+                return false;
+
+            auto requirement = fields_content->requirement();
+            int height = fields_box.y_max - fields_box.y_min;
+            int maximum = std::max(0, requirement.min_y - height - 1);
+            int center = manual_scroll ? scroll_position :
+                (requirement.focused.box.y_min + requirement.focused.box.y_max) / 2;
+            int offset = std::clamp(center - height / 2, 0, maximum);
+            int step = event.mouse().button == Mouse::WheelDown ? 3 : -3;
+            scroll_position = std::clamp(offset + step, 0, maximum) + height / 2;
+            manual_scroll = true;
+            return true;
+        }
+        if (!event.is_mouse() || event.mouse().motion == Mouse::Pressed)
+            manual_scroll = false;
         if (event != Event::Escape && event != Event::CtrlD) return false;
         app.Exit();
         return true;

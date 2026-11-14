@@ -55,6 +55,7 @@ if(BUILD_TESTING)
       tests/avl_tree_test.cpp
       tests/avl_value_test.cpp
       tests/avl_traversal_test.cpp
+      tests/generator_test.cpp
     )
     target_link_libraries(avl_tests PRIVATE avl_tree GTest::gtest_main)
 
