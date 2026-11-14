@@ -4,9 +4,114 @@
 
 #include <array>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
+
+TEST(avl_print_test, empty_tree) {
+    const avl_tree<int> tree;
+    std::ostringstream output;
+    int calls = 0;
+    tree.print_tree(output, [&](std::ostream& stream, const int& value) {
+        ++calls;
+        stream << value;
+    });
+
+    EXPECT_EQ(output.str(), "(пусто)\n");
+    EXPECT_EQ(calls, 0);
+}
+
+TEST(avl_print_test, single_node) {
+    avl_tree<int> tree;
+    tree.insert(42);
+    std::ostringstream output;
+    tree.print_tree(output, [](std::ostream& stream, const int& value) {
+        stream << value;
+    });
+
+    EXPECT_EQ(output.str(), "42\n");
+}
+
+TEST(avl_print_test, both_children_and_indentation) {
+    avl_tree<int> tree;
+    for (int value : {4, 2, 6, 1, 3, 5, 7})
+        tree.insert(value);
+    std::ostringstream output;
+    tree.print_tree(output, [](std::ostream& stream, const int& value) {
+        stream << value;
+    });
+
+    EXPECT_EQ(output.str(),
+        "4\n"
+        "├── L: 2\n"
+        "│   ├── L: 1\n"
+        "│   └── R: 3\n"
+        "└── R: 6\n"
+        "    ├── L: 5\n"
+        "    └── R: 7\n");
+}
+
+TEST(avl_print_test, single_child_keeps_side_label) {
+    for (int child : {1, 3}) {
+        SCOPED_TRACE(child);
+        avl_tree<int> tree;
+        tree.insert(2);
+        tree.insert(child);
+        std::ostringstream output;
+        tree.print_tree(output, [](std::ostream& stream, const int& value) {
+            stream << value;
+        });
+
+        EXPECT_EQ(output.str(), child == 1 ? "2\n└── L: 1\n" : "2\n└── R: 3\n");
+    }
+}
+
+TEST(avl_print_test, custom_formatter_without_copying) {
+    struct item {
+        int key;
+        std::unique_ptr<int> payload;
+    };
+    auto compare = [](const item& left, const item& right) {
+        return left.key < right.key;
+    };
+    avl_tree<item, decltype(compare)> tree(compare);
+    tree.insert(item{2, std::make_unique<int>(20)});
+    tree.insert(item{1, std::make_unique<int>(10)});
+
+    auto formatter = [count = std::make_unique<int>(0)](
+        std::ostream& stream, auto& value
+    ) mutable {
+        static_assert(std::is_same_v<decltype(value), const item&>);
+        stream << ++*count << ": " << value.key << " [" << *value.payload << "]";
+    };
+    std::ostringstream output;
+    const auto& view = tree;
+    view.print_tree(output, formatter);
+
+    EXPECT_EQ(output.str(), "1: 2 [20]\n└── L: 2: 1 [10]\n");
+}
+
+TEST(avl_print_test, formatter_exception_keeps_tree) {
+    avl_tree<int> tree;
+    for (int value : {2, 1, 3})
+        tree.insert(value);
+
+    int calls = 0;
+    auto formatter = [&](std::ostream& stream, const int& value) {
+        if (++calls == 2) throw std::runtime_error("formatter failed");
+        stream << value;
+    };
+    std::ostringstream partial;
+    EXPECT_THROW(tree.print_tree(partial, formatter), std::runtime_error);
+    EXPECT_EQ(calls, 2);
+
+    std::ostringstream output;
+    tree.print_tree(output, [](std::ostream& stream, const int& value) {
+        stream << value;
+    });
+    EXPECT_EQ(output.str(), "2\n├── L: 1\n└── R: 3\n");
+}
 
 TEST(avl_traversal_test, all_orders) {
     avl_tree<int> tree;

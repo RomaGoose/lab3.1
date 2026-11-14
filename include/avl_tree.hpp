@@ -6,7 +6,9 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <ostream>
 #include <stdexcept>
+#include <string>
 #include <type_traits>
 #include <utility>
 
@@ -78,6 +80,10 @@ class avl_tree {
             requires std::invocable<Visitor&, const T&>
         void traverse(traversal_order order, Visitor&& visitor) const;
 
+        template<class Formatter>
+            requires std::invocable<Formatter&, std::ostream&, const T&>
+        void print_tree(std::ostream& stream, Formatter&& formatter) const;
+
     private:
         bool compare_values(const T& left, const T& right) const;
 
@@ -100,6 +106,12 @@ class avl_tree {
         template<class Visitor>
         static void traverse_node(
             const node* current, Visitor& visitor, int root_position, bool reverse
+        );
+
+        template<class Formatter>
+        static void print_children(
+            std::ostream& stream, const node* current,
+            Formatter& formatter, const std::string& prefix
         );
 
         friend struct avl_tree_test_access;
@@ -373,4 +385,41 @@ void avl_tree<T, Compare>::traverse_node(
     if (root_position == 1) std::invoke(visitor, current->value);
     traverse_node(second, visitor, root_position, reverse);
     if (root_position == 2) std::invoke(visitor, current->value);
+}
+
+template<class T, avl_compare<T> Compare>
+template<class Formatter>
+    requires std::invocable<Formatter&, std::ostream&, const T&>
+void avl_tree<T, Compare>::print_tree(
+    std::ostream& stream, Formatter&& formatter
+) const {
+    if (!root) {
+        stream << "(пусто)\n";
+        return;
+    }
+
+    std::invoke(formatter, stream, std::as_const(root->value));
+    stream << '\n';
+    print_children(stream, root.get(), formatter, "");
+}
+
+template<class T, avl_compare<T> Compare>
+template<class Formatter>
+void avl_tree<T, Compare>::print_children(
+    std::ostream& stream, const node* current,
+    Formatter& formatter, const std::string& prefix
+) {
+    const std::pair<const node*, const char*> children[] = {
+        {current->left.get(), "L"}, {current->right.get(), "R"}
+    };
+
+    for (auto [child, side] : children) {
+        if (!child) continue;
+
+        bool last = !current->right || child == current->right.get();
+        stream << prefix << (last ? "└── " : "├── ") << side << ": ";
+        std::invoke(formatter, stream, child->value);
+        stream << '\n';
+        print_children(stream, child, formatter, prefix + (last ? "    " : "│   "));
+    }
 }
