@@ -41,8 +41,9 @@ if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
 
     add_executable(avl_tests 
-      tests/build_smoke_test.cpp 
       tests/avl_tree_test.cpp
+      tests/avl_value_test.cpp
+      tests/avl_traversal_test.cpp
     )
     target_link_libraries(avl_tests PRIVATE avl_tree GTest::gtest_main)
 

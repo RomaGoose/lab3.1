@@ -1,40 +1,13 @@
-#include "avl_tree.hpp"
+#include "avl_test_access.hpp"
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
 #include <array>
-#include <cmath>
+#include <limits>
+#include <random>
+#include <set>
 #include <vector>
 
-struct avl_tree_test_access {
-    template<class Node>
-    static int check_node(const Node* current, std::vector<int>& values) {
-        if (!current) return 0;
-
-        int left_height = check_node(current->left.get(), values);
-        values.push_back(current->value);
-        int right_height = check_node(current->right.get(), values);
-        int height = 1 + std::max(left_height, right_height);
-
-        EXPECT_EQ(current->height, height);
-        EXPECT_LE(std::abs(left_height - right_height), 1);
-        return height;
-    }
-
-    template<class Compare>
-    static void check(const avl_tree<int, Compare>& tree) {
-        std::vector<int> values;
-        check_node(tree.root.get(), values);
-        EXPECT_EQ(values.size(), tree.size());
-        for (std::size_t i = 1; i < values.size(); ++i)
-            EXPECT_TRUE(tree.compare(values[i - 1], values[i]));
-    }
-
-    static int root_value(const avl_tree<int>& tree) {
-        return tree.root->value;
-    }
-};
 
 TEST(avl_tree_test, empty_tree) {
     avl_tree<int> tree;
@@ -77,6 +50,36 @@ TEST(avl_tree_test, insertion_rotations) {
         }
         EXPECT_EQ(avl_tree_test_access::root_value(tree), 20);
         EXPECT_EQ(tree.size(), 3u);
+    }
+}
+
+TEST(avl_tree_test, rotations_preserve_references) {
+    const std::array<std::array<int, 3>, 4> orders = {{
+        {30, 20, 10}, {10, 20, 30}, {30, 10, 20}, {10, 30, 20}
+    }};
+
+    for (const auto& order : orders) {
+        SCOPED_TRACE(::testing::PrintToString(order));
+        avl_tree<int> tree;
+        tree.insert(order[0]);
+        tree.insert(order[1]);
+        auto first = tree.find(order[0]);
+        auto second = tree.find(order[1]);
+        ASSERT_TRUE(first);
+        ASSERT_TRUE(second);
+        const int* first_address = &first->get();
+        const int* second_address = &second->get();
+
+        tree.insert(order[2]);
+
+        auto first_after = tree.find(order[0]);
+        auto second_after = tree.find(order[1]);
+        ASSERT_TRUE(first_after);
+        ASSERT_TRUE(second_after);
+        EXPECT_EQ(&first_after->get(), first_address);
+        EXPECT_EQ(&second_after->get(), second_address);
+        EXPECT_EQ(first->get(), order[0]);
+        EXPECT_EQ(second->get(), order[1]);
     }
 }
 
@@ -190,5 +193,50 @@ TEST(avl_tree_test, sorted_insertions_and_repeated_deletions) {
     EXPECT_EQ(tree.size(), 1u);
     ASSERT_TRUE(tree.find(42));
     EXPECT_EQ(tree.find(42)->get(), 42);
+    avl_tree_test_access::check(tree);
+}
+
+TEST(avl_tree_test, random_operations_match_set) {
+    avl_tree<int> tree;
+    std::set<int> expected;
+    std::mt19937 random(42);
+    std::uniform_int_distribution<int> keys(-100, 100);
+    std::uniform_int_distribution<int> operations(0, 2);
+
+    for (int step = 0; step < 2000; ++step) {
+        SCOPED_TRACE(step);
+        int value = keys(random);
+        switch (operations(random)) {
+            case 0:
+                EXPECT_EQ(tree.insert(value), expected.insert(value).second);
+                break;
+            case 1:
+                EXPECT_EQ(tree.erase(value), expected.erase(value) != 0);
+                break;
+            case 2:
+                EXPECT_EQ(tree.contains(value), expected.contains(value));
+                break;
+        }
+
+        std::vector<int> values;
+        tree.traverse(traversal_order::left_root_right,
+            [&](const int& item) { values.push_back(item); });
+        EXPECT_EQ(values, (std::vector<int>(expected.begin(), expected.end())));
+        avl_tree_test_access::check(tree);
+    }
+}
+
+TEST(avl_tree_test, integer_limits) {
+    avl_tree<int> tree;
+    int low = std::numeric_limits<int>::min();
+    int high = std::numeric_limits<int>::max();
+
+    EXPECT_TRUE(tree.insert(low));
+    EXPECT_TRUE(tree.insert(high));
+    EXPECT_TRUE(tree.insert(0));
+    EXPECT_TRUE(tree.contains(low));
+    EXPECT_TRUE(tree.contains(high));
+    EXPECT_TRUE(tree.erase(low));
+    EXPECT_TRUE(tree.erase(high));
     avl_tree_test_access::check(tree);
 }
