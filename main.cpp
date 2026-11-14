@@ -11,6 +11,7 @@
 #include <charconv>
 #include <limits>
 #include <optional>
+#include <ostream>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -18,6 +19,23 @@
 #include <vector>
 
 #include <unistd.h>
+
+struct record {
+    int id;
+    std::string name;
+};
+
+struct record_compare {
+    bool operator()(const record& left, const record& right) const;
+};
+
+bool record_compare::operator()(const record& left, const record& right) const {
+    return left.id < right.id;
+}
+
+std::ostream& operator<<(std::ostream& stream, const record& value) {
+    return stream << value.id << ": " << value.name;
+}
 
 std::optional<int> parse_number(std::string_view input) {
     auto first = input.find_first_not_of(" \t\n\r\f\v");
@@ -43,10 +61,14 @@ int main() {
 
     if (!isatty(STDIN_FILENO)) return 0;
 
-    avl_tree<int> tree;
+    avl_tree<int> numbers;
+    avl_tree<record, record_compare> records;
     std::string number;
+    std::string name;
     std::string message = "Готово";
     bool input_error = false;
+    std::vector<std::string> modes = {"Числа", "Записи"};
+    int selected_mode = 0;
     std::vector<std::string> orders = {"КЛП", "КПЛ", "ЛПК", "ЛКП", "ПЛК", "ПКЛ"};
     const std::array order_values = {
         traversal_order::root_left_right, traversal_order::root_right_left,
@@ -69,68 +91,126 @@ int main() {
     auto insert_value = [&] {
         auto value = read_value();
         if (!value) return;
-        message = (tree.insert(*value) ? "Добавлено: " : "Уже есть: ") +
-            std::to_string(*value);
+        if (selected_mode == 1 &&
+            name.find_first_not_of(" \t\n\r\f\v") == std::string::npos) {
+            input_error = true;
+            message = "Введите имя.";
+            return;
+        }
+
+        bool inserted = selected_mode == 0
+            ? numbers.insert(*value) : records.insert(record{*value, name});
+        message = (inserted ? "Добавлено: " : "Уже есть: ") + std::to_string(*value);
     };
 
     auto find_value = [&] {
         auto value = read_value();
         if (!value) return;
-        message = (tree.contains(*value) ? "Найдено: " : "Не найдено: ") +
-            std::to_string(*value);
+        if (selected_mode == 0) {
+            message = (numbers.contains(*value) ? "Найдено: " : "Не найдено: ") +
+                std::to_string(*value);
+            return;
+        }
+
+        auto found = records.find(record{*value, {}});
+        message = found
+            ? "Найдено: " + std::to_string(found->get().id) + ": " + found->get().name
+            : "Не найдено: " + std::to_string(*value);
     };
 
     auto erase_value = [&] {
         auto value = read_value();
         if (!value) return;
-        message = (tree.erase(*value) ? "Удалено: " : "Не найдено: ") +
-            std::to_string(*value);
+        bool erased = selected_mode == 0
+            ? numbers.erase(*value) : records.erase(record{*value, {}});
+        message = (erased ? "Удалено: " : "Не найдено: ") + std::to_string(*value);
     };
 
     auto app = App::Fullscreen();
+    auto mode_options = MenuOption::Toggle();
+    mode_options.on_change = [&] {
+        message = "Готово";
+        input_error = false;
+    };
+    auto mode = Menu(&modes, &selected_mode, mode_options);
     InputOption input_options;
     input_options.multiline = false;
     input_options.on_enter = insert_value;
     auto input = Input(&number, "Например: 7", input_options);
+    auto name_input = Input(&name, "Иван Иванов", input_options);
+    auto name_field = Renderer(name_input, [&] {
+        return vbox({text("Имя"), name_input->Render() | border});
+    });
+    name_field = Maybe(name_field, [&] { return selected_mode == 1; });
     auto insert = Button("Вставить", insert_value, ButtonOption::Ascii());
     auto find = Button("Найти", find_value, ButtonOption::Ascii());
     auto erase = Button("Удалить", erase_value, ButtonOption::Ascii());
     auto order = Dropdown(&orders, &selected_order);
     auto exit = Button("Выход", app.ExitLoopClosure());
-    auto controls = Container::Vertical({input, insert, find, erase, order, exit});
+    mode |= CatchEvent([&](Event event) {
+        if (event == Event::Tab) {
+            input->TakeFocus();
+            return true;
+        }
+        if (event == Event::TabReverse) {
+            exit->TakeFocus();
+            return true;
+        }
+        return false;
+    });
+    auto controls = Container::Vertical({
+        mode, input, name_field, insert, find, erase, order, exit
+    });
 
     auto screen = Renderer(controls, [&] {
         std::ostringstream output;
-        tree.print_tree(output, [](std::ostream& stream, const int& value) {
-            stream << value;
-        });
+        std::ostringstream traversal;
+        std::size_t active_size = 0;
+        auto write_tree = [&](const auto& tree) {
+            tree.print_tree(output, [](std::ostream& stream, const auto& value) {
+                stream << value;
+            });
+            bool first = true;
+            tree.traverse(order_values[selected_order], [&](const auto& value) {
+                if (!first) traversal << ' ';
+                traversal << value;
+                first = false;
+            });
+            active_size = tree.size();
+        };
+
+        if (selected_mode == 0)
+            write_tree(numbers);
+        else
+            write_tree(records);
         std::istringstream rows(output.str());
         Elements tree_lines;
         for (std::string line; std::getline(rows, line);)
             tree_lines.push_back(text(line));
 
-        std::ostringstream traversal;
-        bool first = true;
-        tree.traverse(order_values[selected_order], [&](const int& value) {
-            if (!first) traversal << ' ';
-            traversal << value;
-            first = false;
-        });
-        std::string result = tree.empty() ? "(пусто)" : traversal.str();
+        std::string result = active_size == 0 ? "(пусто)" : traversal.str();
 
-        auto panel = vbox({
-            text("Управление") | bold,
+        auto fields = vbox({
+            text("Режим"),
+            mode->Render(),
             separator(),
-            text("Число"),
+            text(selected_mode == 0 ? "Число" : "ID"),
             input->Render() | border,
+            name_field->Render(),
             text("Enter — вставить") | dim,
             insert->Render(),
             find->Render(),
             erase->Render(),
             separator(),
             text("Порядок обхода"),
-            order->Render(),
-            filler(),
+            order->Render()
+        }) | vscroll_indicator | yframe | flex;
+
+        auto panel = vbox({
+            text("Управление") | bold,
+            separator(),
+            fields,
+            separator(),
             exit->Render()
         }) | size(WIDTH, EQUAL, 28) | border;
 
@@ -139,7 +219,7 @@ int main() {
             separator(),
             vbox(tree_lines) | frame | flex,
             separator(),
-            text("Размер: " + std::to_string(tree.size())),
+            text("Размер: " + std::to_string(active_size)),
             paragraph("Результат обхода: " + result)
         }) | flex | border;
 
